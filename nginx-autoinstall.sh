@@ -6,17 +6,17 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 # Define versions
-NGINX_MAINLINE_VER=1.17.6
-NGINX_STABLE_VER=1.16.1
-LIBRESSL_VER=2.9.2
-OPENSSL_VER=1.1.1d
+NGINX_MAINLINE_VER=1.17.10
+NGINX_STABLE_VER=1.18.0
+LIBRESSL_VER=3.0.2
+OPENSSL_VER=1.1.1g
 NPS_VER=1.13.35.2
 HEADERMOD_VER=0.33
 LIBMAXMINDDB_VER=1.3.2
 GEOIP2_VER=3.3
 LUA_JIT_VER=2.1-20181029
-LUA_NGINX_VER=0.10.14rc2
-NGINX_DEV_KIT=0.3.0
+LUA_NGINX_VER=0.10.16rc5
+NGINX_DEV_KIT=0.3.1
 
 # Define installation paramaters for headless install (fallback if unspecifed)
 if [[ "$HEADLESS" == "y" ]]; then
@@ -131,6 +131,12 @@ case $OPTION in
 			if [[ "$MODSEC" = 'y' ]]; then
 				read -p "       Enable nginx ModSecurity? [y/n]: " -e MODSEC_ENABLE
 			fi
+			if [[ $NGINX_VER == $NGINX_MAINLINE_VER ]]; then
+				# The patch only works on mainline
+				while [[ $TLSDYN !=  "y" && $TLSDYN != "n" ]]; do
+					read -p "       Cloudflare's TLS Dynamic Record Resizing patch [y/n]: " -e TLSDYN
+				done
+			fi
 			if [[ "$HTTP3" != 'y' ]]; then
 				echo ""
 				echo "Choose your OpenSSL implementation:"
@@ -192,9 +198,8 @@ case $OPTION in
 		#Brotli
 		if [[ "$BROTLI" = 'y' ]]; then
 			cd /usr/local/src/nginx/modules || exit 1
-			git clone https://github.com/eustas/ngx_brotli
+			git clone https://github.com/google/ngx_brotli
 			cd ngx_brotli || exit 1
-			git checkout v0.1.2
 			git submodule update --init
 		fi
 
@@ -213,7 +218,7 @@ case $OPTION in
 			tar xaf libmaxminddb-${LIBMAXMINDDB_VER}.tar.gz
 			cd libmaxminddb-${LIBMAXMINDDB_VER}/
 			./configure
-			make
+			make -j "$(nproc)"
 			make install
 			ldconfig
 
@@ -242,22 +247,22 @@ case $OPTION in
 		fi
 
 		# Lua
-		if [[ "$LUA" = 'y' ]]; then	
-			# LuaJIT download		
-			cd /usr/local/src/nginx/modules						
+		if [[ "$LUA" = 'y' ]]; then
+			# LuaJIT download
+			cd /usr/local/src/nginx/modules
 			wget https://github.com/openresty/luajit2/archive/v${LUA_JIT_VER}.tar.gz
 			tar xaf v${LUA_JIT_VER}.tar.gz
 			cd luajit2-${LUA_JIT_VER}
-			make
+			make -j "$(nproc)"
 			make install
 
 			# ngx_devel_kit download
-			cd /usr/local/src/nginx/modules									
+			cd /usr/local/src/nginx/modules
 			wget https://github.com/simplresty/ngx_devel_kit/archive/v${NGINX_DEV_KIT}.tar.gz
 			tar xaf v${NGINX_DEV_KIT}.tar.gz
 
 			# lua-nginx-module download
-			cd /usr/local/src/nginx/modules			
+			cd /usr/local/src/nginx/modules
 			wget https://github.com/openresty/lua-nginx-module/archive/v${LUA_NGINX_VER}.tar.gz
 			tar xaf v${LUA_NGINX_VER}.tar.gz
 
@@ -298,7 +303,7 @@ case $OPTION in
 			git submodule update
 			./build.sh
 			./configure
-			make
+			make -j "$(nproc)"
 			make install
 			mkdir /etc/nginx/modsec
 			wget -P /etc/nginx/modsec/ https://raw.githubusercontent.com/SpiderLabs/ModSecurity/v3/master/modsecurity.conf-recommended
@@ -337,7 +342,8 @@ case $OPTION in
 		--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
 		--user=nginx \
 		--group=nginx \
-		--with-cc-opt=-Wno-deprecated-declarations"
+		--with-cc-opt=-Wno-deprecated-declarations \
+		--with-cc-opt=-Wno-ignored-qualifiers"
 
 		NGINX_MODULES="--with-threads \
 		--with-file-aio \
@@ -351,7 +357,7 @@ case $OPTION in
 		--with-http_sub_module"
 
 		# Optional options
-		if [[ "$LUA" = 'y' ]]; then	
+		if [[ "$LUA" = 'y' ]]; then
 			NGINX_OPTIONS=$(echo $NGINX_OPTIONS; echo --with-ld-opt="-Wl,-rpath,/usr/local/lib/")
 		fi
 
@@ -415,6 +421,12 @@ case $OPTION in
 			NGINX_MODULES=$(echo "$NGINX_MODULES"; echo --add-module=/usr/local/src/nginx/modules/ModSecurity-nginx)
 		fi
 
+		# Cloudflare's TLS Dynamic Record Resizing patch
+		if [[ "$TLSDYN" = 'y' ]]; then
+			wget https://raw.githubusercontent.com/nginx-modules/ngx_http_tls_dyn_size/master/nginx__dynamic_tls_records_1.17.7%2B.patch -O tcp-tls.patch
+			patch -p1 < tcp-tls.patch
+		fi
+
 		# HTTP3
 		if [[ "$HTTP3" = 'y' ]]; then
 			cd /usr/local/src/nginx/modules || exit 1
@@ -433,7 +445,7 @@ case $OPTION in
 			NGINX_MODULES=$(echo "$NGINX_MODULES"; echo --with-http_v3_module)
 		fi
 
-		if [[ "$LUA" = 'y' ]]; then	
+		if [[ "$LUA" = 'y' ]]; then
 			export LUAJIT_LIB=/usr/local/lib/
  			export LUAJIT_INC=/usr/local/include/luajit-2.1/
 		fi
